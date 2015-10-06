@@ -1,0 +1,7 @@
+flags: {}
+packages:
+- '.'
+- /home/roman/OpenCog/atomspace/opencog/haskell
+- /home/roman/Lojban/test/tersmu
+extra-deps: []
+resolver: lts-3.5
