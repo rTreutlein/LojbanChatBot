@@ -27,7 +27,10 @@ executable lojbanToAtoms
                      , opencog-lojbantoatoms
                      , tersmu
                      , opencog-atomspace
+                     , random
+                     , transformers
   default-language:    Haskell2010
+  extra-lib-dirs:    /usr/local/lib/opencog
 
 source-repository head
   type:     git

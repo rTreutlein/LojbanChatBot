@@ -5,3 +5,4 @@ packages:
 - /home/roman/Lojban/test/tersmu
 extra-deps: []
 resolver: lts-3.5
+extra-lib-dirs: ['/usr/local/lib/opencog']

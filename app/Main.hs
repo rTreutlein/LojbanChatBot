@@ -6,22 +6,46 @@ import OpenCog.AtomSpace
 import OpenCog.Lojban
 
 import Control.Monad
+import Control.Monad.IO.Class
 import Debug.Trace
 import Data.Maybe
 import qualified Data.List as List
+import Data.Typeable
+import System.Random
+import Control.Monad.Trans.State
+
+
+data State = State { context :: AtomGen
+                   , predicate :: Atom PredicateT
+                   , args :: [AtomGen]
+                   , vars :: [Atom VariableT]
+                   , links :: [AtomGen]
+                   }
+
+type IOState a = StateT State IO a
 
 main :: IO ()
 main = do
+    as <- newAtomSpace Nothing
+    mainloop as
+
+mainloop :: AtomSpaceObj -> IO ()
+mainloop a = do
     text <- getLine
     parsed <- lojbanToJboText text
     print parsed
     putStrLn "\n"
     case parsed of
-        Just p -> runOnNewAtomSpace (convertJboText p >> debug)
+        Just p -> a <: (convertJboText p >> debug)
         _      -> return ()
-    main
+    mainloop a
+
 
 mytrace a = traceShow a a
+
+--toAtomGen :: (forall a. (b <~ AtomT) => Gen a) -> Gen AtomT
+toAtomGen :: Gen LinkT -> Gen AtomT
+toAtomGen a = Gen `appGen` a
 
 convertJboText :: JboText -> AtomSpace ()
 convertJboText [] = return ()
@@ -29,11 +53,14 @@ convertJboText (x:xs) = case x of
     TexticuleProp p -> convertJboProp p >> convertJboText xs
     TexticuleFrag f -> convertJboText xs
 
-highTv :: Maybe TruthVal
+highTv :: TruthVal
 highTv = stv 1 0.9
 
-lowTv :: Maybe TruthVal
+lowTv :: TruthVal
 lowTv = stv 0.000001 0.01
+
+returnGen :: (b <~ a, Monad m, Typeable a) => Atom b -> m (Gen a)
+returnGen a = return $ Gen a
 
 myInheritanceLink :: AtomGen -> AtomGen -> Atom InheritanceT
 myInheritanceLink a b = InheritanceLink highTv `appGen` a `appGen` b :: Atom InheritanceT
@@ -45,16 +72,14 @@ combineConcepts name c1 c2 = insert i1 >> insert i2 >> return c3
           i2 = myInheritanceLink c2 c3
 
 --type AtomProp = forall a. (Maybe (Atom ConceptT),Maybe (Atom a))
-type AtomProp = (Maybe AtomGen,Maybe AtomGen)
+type AtomProp = (Maybe AtomGen,Maybe (Gen LinkT))
 
-genInsert :: Maybe (Gen a) -> AtomSpace ()
-genInsert (Just a)  = appGen insert a
-genInsert (Nothing) = return ()
+insertProp :: AtomProp -> AtomSpace ()
+insertProp = maybeGenInsert . toInsertable
+    where maybeGenInsert (Just a) = genInsert a
+          maybeGenInsert Nothing  = return ()
 
-convertJboProp :: JboProp -> AtomSpace ()
-convertJboProp prop = convertJboProp' prop >>= genInsert . toInsertable
-
-toInsertable :: AtomProp -> Maybe AtomGen
+toInsertable :: AtomProp -> Maybe (Gen LinkT)
 toInsertable (mc,Nothing)         = Nothing
 toInsertable (Just c,Just eval)   = Just $ Gen atom
     where atom = ContextLink highTv `appGen` c `appGen` eval :: Atom ContextT
@@ -62,6 +87,41 @@ toInsertable (Nothing,atom)  = atom
 
 ifandOnlyIfLink a b = AndLink highTv [Gen (ImplicationLink highTv a b)
                                      ,Gen (ImplicationLink highTv b a)]
+
+toLinkWithVars :: Gen LinkT -> AtomSpace (Gen LinkT,Gen VariableT)
+toLinkWithVars l = do
+    var <- randVariableNode
+    let (eval,node) = getNode (toAtomGen l) var
+        eq = Gen $ (EqualLink var `appGen` node :: Atom EqualT)
+    return (Gen $ AndLink highTv [eval,eq],Gen var)
+
+randVariableNode :: AtomSpace (Atom VariableT)
+randVariableNode = do
+    stdgen <- liftIO newStdGen
+    return $ VariableNode ("$" ++ (take 20 $ randomRs ('a','z') stdgen))
+
+getNode :: AtomGen -> Atom VariableT -> (AtomGen,Gen NodeT)--(Gen LinkT,Gen NodeT)
+getNode (Gen (EvaluationLink tv p l)) var =
+    (Gen $ EvaluationLink tv var l,Gen $ p)
+getNode (Gen (ContextLink tv c l)) var = 
+    (Gen (ContextLink tv c `appGen` nl :: Atom ContextT),node)
+    where (nl,node) = getNode (Gen l) var
+
+convertJboProp :: JboProp -> AtomSpace (Maybe AtomGen)
+convertJboProp (Modal QTruthModal p) = do
+    cp <- convertJboProp' p
+    case toInsertable cp of
+        Nothing -> return Nothing
+        Just i -> do
+            (link,var) <- toLinkWithVars i
+            link <- return (SatisfactionLink (VariableList [var]) `appGen` link)
+            insert link
+            res <- cogSatisfy link
+            liftIO $ putStrLn "-----------------"
+            liftIO $ print res
+            liftIO $ putStrLn "-----------------"
+            return Nothing
+convertJboProp prop = convertJboProp' prop >>= insertProp >> return Nothing
 
 convertJboProp' :: JboProp -> AtomSpace AtomProp
 convertJboProp' (Rel (Among s) t) = do
@@ -75,10 +135,10 @@ convertJboProp' (Rel r t) = do
     cr <- convertJboRel r
     ct <- mapM convertJboTerm t
     return (Nothing,Just $ toEval cr ct)
-convertJboProp' (Modal m p) = do
-    cm <- convertJboModal m
+convertJboProp' m@(Modal mo p) = do
+    cm <- convertJboModal mo
     cp <- convertJboProp' p
-    let name = evalBindful $ logjboshow True (Modal m p)
+    let name = myShowModal m
     case cp of
         (Nothing,Just eval) -> return (Just cm,Just eval)
         (Just c, Just eval) -> do
@@ -87,13 +147,13 @@ convertJboProp' (Modal m p) = do
 convertJboProp' (Connected And p1 p2) = do
      cp1 <- convertJboProp' p1
      cp2 <- convertJboProp' p2
-     return (Nothing,Just $ Gen $ AndLink highTv [fromJust $ toInsertable cp1
-                                                 ,fromJust $ toInsertable cp2])
+     return (Nothing,Just $ Gen $ AndLink highTv [toAtomGen $ fromJust $ toInsertable cp1
+                                                 ,toAtomGen $ fromJust $ toInsertable cp2])
 convertJboProp' (Connected Or p1 p2) = do
      cp1 <- convertJboProp' p1
      cp2 <- convertJboProp' p2
-     return (Nothing,Just $ Gen $ OrLink highTv [fromJust $ toInsertable cp1
-                                                ,fromJust $ toInsertable cp2])
+     return (Nothing,Just $ Gen $ OrLink highTv [toAtomGen $ fromJust $ toInsertable cp1
+                                                ,toAtomGen $ fromJust $ toInsertable cp2])
 convertJboProp' (Connected Impl p1 p2) = do
      cp1 <- convertJboProp' p1
      cp2 <- convertJboProp' p2
@@ -134,6 +194,17 @@ convertLojQuantifer (Exactly x) = return $ ConceptNode (show x) lowTv
 
 conToPred :: Atom ConceptT -> Atom PredicateT
 conToPred (ConceptNode name tv) = PredicateNode name tv
+
+myShowModal :: JboProp -> String
+myShowModal (Modal m p) = myshow m ++ rest
+    where rest = case p of (Modal _ _) -> myShowModal p
+                           otherwise   -> ""
+
+myshow :: JboModalOp -> String
+myshow (JboTagged tag mp) = showJbo tag
+myshow (WithEventAs a) = "WithEvant"
+myshow QTruthModal = "QTruthModal"
+myshow NonVeridical = "nonVeridical"
 
 convertJboModal :: JboModalOp -> AtomSpace AtomGen
 convertJboModal (JboTagged tag mp) = do
@@ -183,7 +254,7 @@ convertAbsMex (MexInt x) = return $ show x
 --convertAbsMex (MexSumti x) = _convertAbsMex_body
 --convertAbsMex (MexArray x) = _convertAbsMex_body
 
-toEval :: Atom PredicateT -> [AtomGen] -> AtomGen
+toEval :: Atom PredicateT -> [AtomGen] -> Gen LinkT
 toEval p c = Gen $ EvaluationLink highTv p (ListLink c)
 
 showJbo a = evalBindful $ logjboshow True a
@@ -219,7 +290,7 @@ convertJboRel (AbsProp a prop) = do
 convertJboRel (AbsPred a pred) = do
     let name = evalBindful $ logjboshow True (AbsPred a pred)
     return (PredicateNode name lowTv)
-convertJboRel (ScalarNegatedRel _s rel) = convertJboRel rel --XXX ignoring s
+convertJboRel a@(ScalarNegatedRel _ _) = return (PredicateNode (showJbo a) lowTv)
 --convertJboRel (Among s) = convertJboTerm s >>= (\c -> return $ conToPred c)
 --convertJboRel (TanruConnective s1 s2 s3) = _convertJboRel_body
 --convertJboRel (UnboundBribasti s) = _convertJboRel_body
@@ -238,41 +309,77 @@ convertJboVPred a = return $ evalBindful $ logjboshow True a
 
 --convertJboNpred :: JboNPred -> AtomSpace String
 --convertJboNpred (JboNPred arity pred) =return $ evalBindful $ logjboshow True 
-    --let args = map BoundVar $ take arity [1..]
-    --    prop = pred args
-    --(_,Just (EvaluationLink _ p _)) <- convertJboProp' prop
-    --return $ getName p
+--    let args = map BoundVar $ take arity [1..]
+--        prop = pred args
+--    (_,Just (EvaluationLink _ p _)) <- convertJboProp' prop
+--    return $ getName p
 
 convertAbstractor :: Abstractor -> AtomSpace String
 convertAbstractor (NU s) = return s
 
---getName :: (a <~ NodeT) => Atom a -> String
---getName a = List.delete '"' $ List.delete '"' $ (words . show $ a)!!1
---
-returnGen a = return $ Gen a
-
 convertJboTerm :: JboTerm -> AtomSpace AtomGen
 convertJboTerm (NonAnaph s)                  = returnGen $ ConceptNode s lowTv
-convertJboTerm (Constant n _)                = returnGen $ ConceptNode (show n) lowTv
+convertJboTerm (Constant n _)                = randConceptNode >>= returnGen
 convertJboTerm (Value v)                     = convertJboMex v
-convertJboTerm (Named s)                     = returnGen $ ConceptNode s lowTv
+convertJboTerm (Named s)                     = do
+    stdgen <- liftIO newStdGen
+    let named = ConceptNode (take 20 $ randomRs ('a','z') stdgen) lowTv
+    insert $ EvaluationLink highTv
+                (PredicateNode "cmene" lowTv)
+                (ListLink |> ConceptNode s lowTv
+                          \> named)
+    returnGen named
 convertJboTerm (BoundVar n)                  = returnGen $ ConceptNode "" lowTv
 convertJboTerm (UnboundSumbasti x)           = convertSumtiAtom x
 convertJboTerm (JboQuote (ParsedQuote text)) = returnGen $ ConceptNode (show text) lowTv
 convertJboTerm Unfilled                      = returnGen $ ConceptNode "zo'e" $ stv 1 1
-convertJboTerm (JoikedTerms "ce" t1 t2)      = do
+convertJboTerm (JoikedTerms a t1 t2) | a == "ce" || a == "jo'u" = do
     ct1 <- convertJboTerm t1
     ct2 <- convertJboTerm t2
-    returnGen (SetLink [ct1,ct2])
+    let connectWith pred c1 c2 = do
+            c3 <- randConceptNode
+            insert $ evalLink pred [Gen c3, c1, c2]
+            returnGen c3
+    case a of
+        "ce"     -> returnGen (SetLink [ct1,ct2])
+        "jo'u"   -> returnGen (SetLink [ct1,ct2])
+        "ce'o"   -> returnGen (ListLink [ct1,ct2])
+        "sece'o" -> returnGen (ListLink [ct2,ct1])
+        -- "fa'u"   -> do
+        "joi"    -> connectWith "mass" ct1 ct2
+        "je'o"   -> connectWith "union" ct1 ct2
+        "ku'a"   -> connectWith "intersection" ct1 ct2
+        "pi'u"   -> connectWith "crossProduct" ct1 ct2
+        "sepi'u" -> connectWith "crossProduct" ct2 ct1
+convertJboTerm (PredNamed x) = do
+    stdgen <- liftIO newStdGen
+    let names   = apply (splitAt 20) $ randomRs ('a','z') stdgen
+        meaning = (ConceptNode (names!!1) lowTv)
+        name    = (ConceptNode (names!!2) lowTv)
+        named   = (ConceptNode (names!!3) lowTv)
+    cp <- convertJboProp' $ x  $ NonAnaph (names!!1)
+    insertProp cp
+    insert $ evalLink "smuni" [Gen meaning, Gen name]
+    insert $ evalLink "cmene" [Gen name, Gen named]
+    returnGen named
 --convertJboTerm (Var x) = _convertJboTerm_body
---convertJboTerm (Named x) = _convertJboTerm_body
---convertJboTerm (PredNamed x) = _convertJboTerm_body
 --convertJboTerm (JboErrorQuote x) = _convertJboTerm_body
 --convertJboTerm (JboNonJboQuote x) = _convertJboTerm_body
 --convertJboTerm (TheMex x) = _convertJboTerm_body
 --convertJboTerm (Valsi x) = _convertJboTerm_body
 --convertJboTerm (QualifiedTerm x1 x2) = _convertJboTerm_body
 convertJboTerm a                             = error $ traceShow a "JboTerm Incompelte"
+
+evalLink s l = EvaluationLink highTv (PredicateNode s lowTv) (ListLink l)
+
+apply :: (t -> (a, t)) -> t -> [a]
+apply f l = (x:r)
+    where (x,xs) = f l
+          r      = apply f xs
+
+randConceptNode = do
+    stdgen <- liftIO newStdGen
+    return $ ConceptNode (take 20 $ randomRs ('a','z') stdgen) lowTv
 
 convertSumtiAtom :: SumtiAtom -> AtomSpace AtomGen
 convertSumtiAtom (LerfuString s) = convertLerfu $ head s
