@@ -2,7 +2,10 @@ flags: {}
 packages:
 - '.'
 - /home/roman/OpenCog/atomspace/opencog/haskell
-- /home/roman/Lojban/test/tersmu
-extra-deps: []
-resolver: lts-3.5
-extra-lib-dirs: ['/usr/local/lib/opencog']
+- location: /home/roman/Lojban/test/tersmu
+
+#extra-deps: [opencog-atomspace-0.1.0.2]
+resolver: lts-3.6
+extra-lib-dirs: [/usr/local/lib/opencog] #,/home/roman/.stack/programs/x86_64-linux/ghc-7.10.2/lib/ghc-7.10.2/rts]
+ghc-options:
+    opencog-lojbantoatoms: -lHSrts-ghc7.10.2

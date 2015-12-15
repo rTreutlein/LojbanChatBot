@@ -8,30 +8,40 @@ license-file:        LICENSE
 author:              Author name here
 maintainer:          example@example.com
 copyright:           2010 Author Here
-category:            Web
+category:            Parser
 build-type:          Simple
--- extra-source-files:
 cabal-version:       >=1.10
 
 library
-  hs-source-dirs:      src
-  exposed-modules:     OpenCog.Lojban
-  build-depends:       base >= 4.7 && < 5
+  hs-source-dirs:    Lib
+  exposed-modules:   OpenCog.Lojban
+  other-modules:     OpenCog.Lojban.Util
+                     , OpenCog.Lojban.State
+                     , OpenCog.Lojban.Parser
+                     , OpenCog.Lojban.SuReal
+  build-depends:     base
+                     , opencog-atomspace
+                     , transformers
+                     , tersmu
+                     , random
+                     , containers
   default-language:    Haskell2010
+  c-sources:         hsbracket.c
+  ghc-options:       -dynamic -shared -fPIC
 
 executable lojbanToAtoms
-  hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
-                     , opencog-lojbantoatoms
-                     , tersmu
                      , opencog-atomspace
-                     , random
                      , transformers
   default-language:    Haskell2010
-  extra-lib-dirs:    /usr/local/lib/opencog
 
-source-repository head
-  type:     git
-  location: https://github.com/githubuser/new-template
+Test-Suite lojban-test
+  hs-source-dirs:      Test
+  main-is:             Main.hs
+  type:                exitcode-stdio-1.0
+  build-depends:       base
+                     , opencog-atomspace
+                     , tasty
+                     , tasty-hunit
+  default-language:    Haskell2010
