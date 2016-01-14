@@ -1,8 +1,8 @@
 flags: {}
 packages:
 - '.'
-- /home/roman/OpenCog/atomspace/opencog/haskell
+#- /home/roman/OpenCog/atomspace/opencog/haskell
 
-#extra-deps: [opencog-atomspace-0.1.0.2]
+extra-deps: [opencog-atomspace-0.1.0.3]
 resolver: lts-3.6
 extra-lib-dirs: [/usr/local/lib/opencog]
