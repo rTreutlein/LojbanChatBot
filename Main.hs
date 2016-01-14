@@ -74,7 +74,7 @@ deleteAnchor a b = if b then deletelink else deletelinked
                                                             ] noTv
                                            ] noTv
                         ,Link "GetLink" [Link "ListLink" [Node "AnchorNode" a noTv
-                                                         ,Node "VariableNode ""$text" noTv
+                                                         ,Node "VariableNode""$text" noTv
                                                          ] noTv
                                         ] noTv
                         ] noTv
