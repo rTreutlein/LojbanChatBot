@@ -1,38 +1,52 @@
+{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE GADTs              #-}
 module Main where
 
 import OpenCog.AtomSpace
-import OpenCog.Lojban
-
-import Test.Tasty
-import Test.Tasty.HUnit
 
 main :: IO ()
-main = defaultMain suite
+main = mapM testParsing testData >> pure ()
 
-suite :: TestTree
-suite = testGroup "Parser Test Suite"
-    [ testCase "Simple Sentences" $ assert $ all id <$> mapM testSentence testData
-    ]
-
-testSentence :: (String,AtomGen) -> IO (Bool)
-testSentence (string,solution) = do
-    runOnNewAtomSpace $ lojbanToAtomese string >> debug
-    return True
+testParsing :: String -> IO (Bool)
+testParsing s = do
+    let atom = (ListLink |> AnchorNode "Lojban" \> ConceptNode s noTv)
+    as <- newAtomSpace Nothing
+    as <: insert atom
+    as <: insert behavior
+    as <: evaluate behavior
+    as <: insert getAnswer
+    res <- as <: execute getAnswer
+    case res of
+        Just (Gen (SetLink [Gen (ConceptNode text _)])) -> return True
+        _ -> error ("got: " ++ show res ++ "for input: " ++ s)
 
 testData =
-    [("mi jimpe do",
-      Gen $ EvaluationLink highTv
-              (PredicateNode "jimpe" lowTv)
-              (ListLink |> ConceptNode "mi" lowTv
-                        \> ConceptNode "do" lowTv))
-    ,("mi jimpe lo gleki",
-      Gen $ SetLink |> EvaluationLink highTv
-                          (PredicateNode "jimpe" lowTv)
-                          (ListLink |> ConceptNode "mi" lowTv
-                                    \> ConceptNode "lo gleki" lowTv)
-                    \> EvaluationLink highTv
-                          (PredicateNode "gleki" lowTv)
-                          (ListLink \> ConceptNode "lo gleki" lowTv))]
-    {-,("mi jimpe lo gleki be do",)
-    ,("mi jimpe lo nu gleki",)
-    ,("mi e do jimpe",)]-}
+  ["mi jimpe do"
+  ,"mi jimpe lo gleki"
+  ,"mi jimpe lo gleki be do"
+  ,"mi jimpe lo nu gleki"
+  ,"mi e do jimpe"
+  ,"mi vi jimpe"
+  ]
+
+getAnswer = GetLink noVars $ ListLink |> AnchorNode "LojbanAnswer"
+                                      \> VariableNode "$var"
+
+behavior =
+  (SatisfactionLink noVars
+            (SequentialAndLink
+                |> (TrueLink \> translateLojbanToAtomese)
+                \> (TrueLink \> translateAtomeseToLojban)
+             ))
+
+translateLojbanToAtomese =
+  ExecutionOutputLink
+        (GroundedSchemaNode "lib: libopencog-lojbantoatoms-0.1.0.0.so\\lojbanToAtomese")
+        (ListLink \> (GetLink noVars $ ListLink |> AnchorNode "Lojban"
+                                                \> VariableNode "$text"))
+
+translateAtomeseToLojban =
+  ExecutionOutputLink
+        (GroundedSchemaNode "lib: libopencog-lojbantoatoms-0.1.0.0.so\\atomeseToLojban")
+        (ListLink \> (GetLink noVars $ ListLink |> AnchorNode "StatmentAnchor"
+                                                \> VariableNode "$text"))

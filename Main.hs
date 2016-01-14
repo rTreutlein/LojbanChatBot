@@ -14,65 +14,118 @@ main :: IO ()
 main = do
     as <- newAtomSpace Nothing
     as <: insert behavior
+    as <: insert deleteAnswerAnchor
     mainloop as
 
 mainloop :: AtomSpaceObj -> IO ()
 mainloop as = do
     text <- getLine
-    let atom = (ListLink |> AnchorNode "Lojban" \> ConceptNode text noTv)
+    let atom = Link "ListLink" [Node "AnchorNode" "Lojban" noTv
+                               ,Node "ConceptNode" text noTv
+                               ] noTv
     as <: insert atom
-    as <: (evaluate (DefinedPredicateNode "mainloop" noTv) >> debug)
+    as <: evaluate $ Node "DefinedPredicateNode" "mainloop" noTv
+  --as <: debug
+    as <: printAnswer
     mainloop as
 
+printAnswer :: AtomSpace ()
+printAnswer = do
+    insert getAnswer
+    response <- execute getAnswer
+    execute $ deleteAnswerAnchor
+    case response of
+        Just (Link "SetLink" [_,Node "ConceptNode" text _] _) -> liftIO $ print text
+        _ -> return ()
+
+getAnswer = Link "GetLink" [Link "ListLink" [Node "AnchorNode" "LojbanAnswer" noTv
+                                            ,Node "VariableNode" "$var" noTv
+                                            ] noTv
+                           ] noTv
+
+deleteAnswerAnchor = deleteAnchor "LojbanAnswer" True
+
 behavior =
-  DefineLink
-        (DefinedPredicateNode "mainloop" noTv)
-        (SatisfactionLink noVars
-            (SequentialAndLink
-                -- |> (TrueLink \> (SleepLink $ NumberNode 1))
-                |> (TrueLink \> translateLojbanToAtomese)
-                |> (TrueLink \> deleteLojbanAnchor)
-             -- |> (TrueLink \> translateAtomeseToLojban)
-             -- |> (TrueLink \> deleteStatmentAnchor)
-                |> (TrueLink \> answerQuestion)
-             -- |> (TrueLink \> deleteQuestionAnchor)
-                \> (TrueLink [])
-             -- \> (DefinedPredicateNode "mainloop" noTv)
-             ))
+  Link "DefineLink"
+        [Node "DefinedPredicateNode" "mainloop" noTv
+        ,Link "SatisfactionLink"
+            [Link "SequentialAndLink"
+             -- , Link "TrueLink" [deleteAnswerAnchor] noTv
+                [ Link "TrueLink" [translateLojbanToAtomese] noTv
+                , Link "TrueLink" [deleteAnchor "Lojban" False] noTv
+             -- , Link "TrueLink" [translateAtomeseToLojban] noTv
+             -- , Link "TrueLink" [deleteStatmentAnchor] noTv
+                , Link "TrueLink" [answerQuestion] noTv
+                , Link "TrueLink" [deleteAnchor "QuestionAnchor" True] noTv
+                , Link "TrueLink" [] noTv
+                ] noTv
+             -- , Node "DefinedPredicateNode" "mainloop" noTv
+            ] noTv
+        ] noTv
 
-deleteLojbanAnchor =
-    PutLink
-        (DeleteLink $ VariableNode "$text")
-        (GetLink noVars $ ListLink |> AnchorNode "Lojban"
-                                   \> VariableNode "$text")
+deleteAnchor :: String --Specify what AnchorNode to look for
+             -> Bool --True only Link will be delted
+                  --False the linked content will be delted
+             -> Atom
+deleteAnchor a b = if b then deletelink else deletelinked
+    where deletelink = Link "PutLink"
+                        [Link "DeleteLink" [Link "ListLink" [ Node "AnchorNode" a noTv
+                                                            , Node "VariableNode" "$text" noTv
+                                                            ] noTv
+                                           ] noTv
+                        ,Link "GetLink" [Link "ListLink" [Node "AnchorNode" a noTv
+                                                         ,Node "VariableNode ""$text" noTv
+                                                         ] noTv
+                                        ] noTv
+                        ] noTv
+          deletelinked = Link "PutLink"
+                        [Link "DeleteLink" [Node "VariableNode" "$text" noTv] noTv
+                        ,Link "GetLink" [Link "ListLink" [Node "AnchorNode" a noTv
+                                                         ,Node "VariableNode" "$text" noTv
+                                                         ] noTv
+                                        ] noTv
+                        ] noTv
 
-deleteStatmentAnchor =
-    PutLink
-        (DeleteLink $ ListLink |> AnchorNode "StatmentAnchor"
-                               \> VariableNode "$text")
-        (GetLink noVars $ ListLink |> AnchorNode "StatmentAnchor"
-                                   \> VariableNode "$text")
 
-deleteQuestionAnchor =
-    PutLink
-        (DeleteLink $ ListLink |> AnchorNode "QuestionAnchor"
-                               \> VariableNode "$text")
-        (GetLink noVars $ ListLink |> AnchorNode "QuestionAnchor"
-                                   \> VariableNode "$text")
 
 translateLojbanToAtomese =
-    ExecutionOutputLink
-        (GroundedSchemaNode "lib: libopencog-lojbantoatoms-0.1.0.0.so\\lojbanToAtomese")
-        (ListLink \> (GetLink noVars $ ListLink |> AnchorNode "Lojban"
-                                                \> VariableNode "$text"))
+    Link "ExecutionOutputLink"
+        [Node "GroundedSchemaNode"
+            "lib: libopencog-lojbantoatoms-0.1.0.0.so\\lojbanToAtomese" noTv
+        ,Link "ListLink"
+            [Link "GetLink"
+                [Link "ListLink"
+                    [Node "AnchorNode" "Lojban" noTv
+                    ,Node "VariableNode" "$text" noTv
+                    ] noTv
+                ] noTv
+             ] noTv
+        ]noTv
 
 translateAtomeseToLojban =
-    ExecutionOutputLink
-        (GroundedSchemaNode "lib: libopencog-lojbantoatoms-0.1.0.0.so\\atomeseToLojban")
-        (ListLink \> (GetLink noVars $ ListLink |> AnchorNode "StatmentAnchor"
-                                                \> VariableNode "$text"))
+    Link "ExecutionOutputLink"
+        [Node "GroundedSchemaNode"
+            "lib: libopencog-lojbantoatoms-0.1.0.0.so\\atomeseToLojban" noTv
+        ,Link "ListLink"
+            [Link "GetLink"
+                [Link "ListLink"
+                    [Node "AnchorNode" "StatmentAnchor" noTv
+                    ,Node "VariableNode" "$text" noTv
+                    ] noTv
+                ] noTv
+            ] noTv
+        ] noTv
+
 answerQuestion =
-    ExecutionOutputLink
-        (GroundedSchemaNode "lib: libopencog-lojbantoatoms-0.1.0.0.so\\atomeseToLojban")
-        (ListLink \> (GetLink noVars $ ListLink |> AnchorNode "QuestionAnchor"
-                                                \> VariableNode "$text"))
+    Link "ExecutionOutputLink"
+        [Node "GroundedSchemaNode"
+            "lib: libopencog-lojbantoatoms-0.1.0.0.so\\atomeseToLojban" noTv
+        ,Link "ListLink"
+            [Link "GetLink"
+                [Link "ListLink"
+                    [Node "AnchorNode" "QuestionAnchor" noTv
+                    ,Node "VariableNode" "$text" noTv
+                    ] noTv
+                ] noTv
+            ] noTv
+        ] noTv
